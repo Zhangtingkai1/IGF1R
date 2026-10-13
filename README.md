@@ -4,6 +4,7 @@
 # 0. 环境与路径
 # ============================================================
 PROJECT_DIR <- "<PROJECT_DIR>"   # 替换为实际项目根目录
+
 setwd(PROJECT_DIR)
 
 library(Seurat)
