@@ -1,9 +1,7 @@
 # IGF1R
 # Stomach Cancer Analysis Code
-# ============================================================
-# 0. 环境与路径
-# ============================================================
-# PROJECT_DIR需要替换为实际项目根目录（本目录下需包含 GSE183904_RAW 数据文件夹）
+# 0. Environment and paths
+# Replace PROJECT_DIR with your project root (must contain GSE183904_RAW data folder)
 PROJECT_DIR <- "<PROJECT_DIR>"
 setwd(PROJECT_DIR)
 
@@ -24,17 +22,16 @@ fig_dir <- file.path(PROJECT_DIR, "figures")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
-# ============================================================
-# 1. 数据读取与 Seurat 对象构建
-# ============================================================
+# 1. Data loading and Seurat object construction
+
 csv_files <- list.files("GSE183904_RAW", pattern = "\\.csv\\.gz$",
                         full.names = TRUE, ignore.case = TRUE)
-message("找到 ", length(csv_files), " 个样本文件")
+message("Found ", length(csv_files), " sample files")
 
 seurat_list <- list()
 for (f in csv_files) {
   sample_name <- gsub("\\.csv\\.gz$", "", basename(f))
-  cat("正在处理: ", sample_name, "\n")
+  cat("Processing: ", sample_name, "\n")
   df <- fread(f, header = TRUE, showProgress = FALSE)
   gene_names <- df[[1]]
   df[, 1 := NULL]
@@ -60,9 +57,8 @@ merged_seurat <- merge(
 )
 rm(seurat_list); gc()
 
-# ============================================================
-# 2. 质控、SCTransform、Harmony 整合与聚类
-# ============================================================
+# 2. QC, SCTransform, Harmony integration and clustering
+
 merged_seurat[["percent.mt"]] <- PercentageFeatureSet(merged_seurat, pattern = "^MT-")
 merged_seurat <- subset(
   merged_seurat,
@@ -93,9 +89,7 @@ all_samples <- RunUMAP(all_samples, reduction = "harmony", dims = 1:30)
 all_samples <- FindNeighbors(all_samples, reduction = "harmony", dims = 1:30)
 all_samples <- FindClusters(all_samples, resolution = 0.5)
 
-# ============================================================
-# 3. 细胞类型手动注释
-# ============================================================
+# 3. Manual cell type annotation
 marker_list <- list(
   Epithelial   = c("EPCAM", "KRT8", "KRT18", "CDH1"),
   Fibroblast   = c("COL1A1", "DCN", "LUM", "COL1A2"),
@@ -130,12 +124,12 @@ names(cell_annot) <- colnames(all_samples)
 all_samples <- AddMetaData(all_samples, metadata = cell_annot, col.name = "manual_celltype")
 table(all_samples$manual_celltype, all_samples$seurat_clusters)
 
-# 统一 RNA assay 层并为后续分析准备 log-normalized data 层
+# Unify RNA assay layer and prepare log-normalized data
 DefaultAssay(all_samples) <- "RNA"
 all_samples <- JoinLayers(all_samples, assay = "RNA")
 all_samples <- NormalizeData(all_samples, normalization.method = "LogNormalize")
 
-# ---------- 注释可视化：UMAP 聚类图 / 细胞类型图 ----------
+# ---------- Annotation UMAP: clusters / cell types ----------
 p_umap_clusters <- DimPlot(
   all_samples, reduction = "umap", group.by = "seurat_clusters",
   label = TRUE, label.size = 3
@@ -150,7 +144,7 @@ p_umap_celltype <- DimPlot(
 ggsave(file.path(fig_dir, "UMAP_by_celltype.pdf"),
        p_umap_celltype, width = 9, height = 7)
 
-# ---------- 标记基因 FeaturePlot / DotPlot 验证 ----------
+# ---------- Canonical marker FeaturePlot / DotPlot ----------
 markers_feature <- c("EPCAM", "COL1A1", "CD3D", "CD68", "CD79A", "PECAM1")
 p_feature <- FeaturePlot(
   all_samples, features = markers_feature, ncol = 2, order = TRUE
@@ -165,7 +159,7 @@ p_dot <- DotPlot(
 ggsave(file.path(fig_dir, "DotPlot_canonical_markers.pdf"),
        p_dot, width = 14, height = 6)
 
-# ---------- IGF1R 跨细胞类型表达 ----------
+# ---------- IGF1R expression across cell types ----------
 df_igf1r_ct <- FetchData(all_samples, vars = c("manual_celltype", "IGF1R"))
 colnames(df_igf1r_ct) <- c("celltype", "IGF1R")
 p_igf1r_ct <- ggplot(df_igf1r_ct, aes(x = celltype, y = IGF1R, fill = celltype)) +
@@ -181,8 +175,8 @@ p_igf1r_ct <- ggplot(df_igf1r_ct, aes(x = celltype, y = IGF1R, fill = celltype))
 ggsave(file.path(fig_dir, "IGF1R_by_celltype_violin.pdf"),
        p_igf1r_ct, width = 9, height = 6)
 
-# ============================================================
-# 4. inferCNV 恶性上皮鉴定（以 CNV 结果筛选恶性细胞）
+
+# 4. inferCNV malignant epithelial identification
 epi_cells <- subset(all_samples, manual_celltype == "Epithelial")
 ref_cells <- subset(all_samples, manual_celltype == "Endothelial")
 
@@ -203,7 +197,7 @@ annotations <- data.frame(
 write.table(annotations, file = "inferCNV_annotations.txt",
             sep = "\t", quote = FALSE, col.names = FALSE)
 
-# 基因位置文件（若本地不存在则下载）
+# Gene position file (download if not present locally)
 if (!file.exists("gencode_v21_gen_pos.complete.txt")) {
   download.file(
     url = "https://data.broadinstitute.org/Trinity/CTAT/cnv/gencode_v21_gen_pos.complete.txt",
@@ -217,7 +211,7 @@ gene_order_raw$symbol <- gsub("\\|.*", "", gene_order_raw$gene_info)
 
 my_genes <- rownames(combined_counts)
 matched_idx <- match(my_genes, gene_order_raw$symbol)
-# 对齐基因位置表：仅保留能匹配到染色体位置的基因，保证矩阵与位置文件一致
+# Align gene order: keep only genes with chromosomal positions
 custom_order <- data.frame(
   gene  = my_genes[!is.na(matched_idx)],
   chr   = gene_order_raw$chr[matched_idx[!is.na(matched_idx)]],
@@ -226,8 +220,8 @@ custom_order <- data.frame(
   stringsAsFactors = FALSE
 )
 combined_counts <- combined_counts[!is.na(matched_idx), , drop = FALSE]
-cat("表达矩阵总基因数:", length(my_genes), "\n")
-cat("成功匹配位置信息的基因数:", nrow(custom_order), "\n")
+cat("Total genes in matrix:", length(my_genes), "\n")
+cat("Genes matched to positions:", nrow(custom_order), "\n")
 write.table(custom_order, file = "custom_gene_order.txt",
             sep = "\t", quote = FALSE, row.names = FALSE, col.names = FALSE)
 
@@ -248,7 +242,7 @@ infercnv_obj <- infercnv::run(
   output_format     = "pdf"
 )
 
-# 读取 inferCNV HMM 输出，基于拷贝数变异状态判定恶性/正常上皮
+# Parse inferCNV HMM output to call malignant / normal epithelial
 grouping_file <- list.files("inferCNV_output",
                             pattern = "cell_groupings$", full.names = TRUE)[1]
 regions_file  <- list.files("inferCNV_output",
@@ -263,14 +257,14 @@ cell_groups <- cell_groups[cell_groups$cell_group_name != "cell_group_name", ]
 regions <- read.table(regions_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 gene_cnv <- read.table(gene_file, header = TRUE, sep = "\t", stringsAsFactors = FALSE)
 
-# 取长度最长的 Top10 CNV 区域
+# Take the 10 longest CNV regions
 regions <- regions %>% mutate(length = end - start)
 top_regions <- regions %>% arrange(desc(length)) %>% slice_head(n = 10)
 
-# 仅保留属于上皮细胞的亚克隆
+# Keep only epithelial subclones
 epi_groups <- cell_groups %>% filter(grepl("^Epithelial", cell_group_name))
 
-# 标记每个上皮细胞是否落在任一 Top10 CNV 区域（state != 1 表示存在拷贝数改变）
+# Mark epithelial cells in any Top10 CNV region (state != 1 = altered)
 for (i in seq_len(nrow(top_regions))) {
   r <- top_regions[i, ]
   active_groups <- gene_cnv %>%
@@ -286,27 +280,27 @@ epi_cells$cnv_status <- ifelse(
   rowSums(epi_cells@meta.data[, cnv_cols, drop = FALSE]) > 0,
   "Malignant", "Normal"
 )
-cat("\n== 上皮细胞 CNV 状态 ==\n")
+cat("\n== Epithelial cell CNV status ==\n")
 print(table(epi_cells$cnv_status))
 
-# 以 CNV 结果筛选恶性上皮细胞，映射回全样本
+# Filter malignant epithelial by CNV calls, map back to full sample
 malignant_cells <- colnames(epi_cells)[epi_cells$cnv_status == "Malignant"]
 all_samples$cell_group <- ifelse(
   colnames(all_samples) %in% malignant_cells,
   "Malignant_Epithelial", "Other_Cells"
 )
 epi_cells <- subset(epi_cells, cnv_status == "Malignant")
-cat("\n== 恶性上皮细胞数 ==\n")
+cat("\n== Malignant epithelial cell count ==\n")
 cat(ncol(epi_cells), "\n")
 print(table(all_samples$cell_group))
 
-# 打印恶性上皮占比（对应论文"绝大多数上皮呈显著 CNV"）
+# Print malignant fraction (manuscript: "vast majority" of epithelial are CNV+)
 n_epi_total <- sum(all_samples == "Epithelial")
 n_malig <- length(malignant_cells)
-cat(sprintf("\n恶性上皮占上皮细胞比例 = %.1f%% (%d/%d)\n",
+cat(sprintf("\nMalignant fraction of epithelial cells = %.1f%% (%d/%d)\n",
             100 * n_malig / n_epi_total, n_malig, n_epi_total))
 
-# 图：CNV 恶性判定 UMAP + IGF1R 分组小提琴
+# Fig: CNV malignant UMAP + IGF1R by-group violin
 p_cellgroup <- DimPlot(
   all_samples, reduction = "umap", group.by = "cell_group",
   cols = c("Malignant_Epithelial" = "#D73027", "Other_Cells" = "grey80"),
@@ -327,8 +321,8 @@ p_cnv_panel <- p_cellgroup | p_igf1r_group + plot_layout(widths = c(2.2, 1))
 ggsave(file.path(fig_dir, "CNV_malignant_UMAP.pdf"),
        p_cnv_panel, width = 13, height = 6)
 
-# ============================================================
-# 5. 恶性上皮亚群分析与 cluster1_vs_rest
+
+# 5. Malignant epithelial subclustering and cluster1_vs_rest
 DefaultAssay(epi_cells) <- "RNA"
 epi_cells <- NormalizeData(epi_cells, normalization.method = "LogNormalize")
 epi_cells <- FindVariableFeatures(epi_cells, selection.method = "vst", nfeatures = 2000)
@@ -338,7 +332,7 @@ epi_cells <- RunUMAP(epi_cells, dims = 1:15)
 epi_cells <- FindNeighbors(epi_cells, dims = 1:15)
 epi_cells <- FindClusters(epi_cells, resolution = 0.4)
 
-# 细胞周期 / 干性 / EMT 评分
+# Cell cycle / stemness / EMT scores
 epi_cells <- CellCycleScoring(
   epi_cells,
   s.features = cc.genes$s.genes,
@@ -358,7 +352,7 @@ epi_cells <- AddModuleScore(epi_cells, features = list(EMT = emt_genes),
 epi_cells$Stemness_Score <- epi_cells$Stemness1
 epi_cells$EMT_Score <- epi_cells$EMT1
 
-# 定义 Cluster1（亚群编号为 "1"）与其余恶性上皮
+# Define Cluster1 (subcluster "1") vs other malignant epithelial
 DefaultAssay(epi_cells) <- "RNA"
 epi_cells <- JoinLayers(epi_cells, assay = "RNA")
 epi_cells$cluster1_vs_rest <- ifelse(
@@ -367,7 +361,7 @@ epi_cells$cluster1_vs_rest <- ifelse(
 cat("\n== cluster1_vs_rest ==\n")
 print(table(epi_cells$cluster1_vs_rest))
 
-# Cluster1 差异基因（供下游解读参考）
+# Cluster1 DEGs (for downstream interpretation)
 degs_cluster1 <- FindMarkers(
   epi_cells,
   ident.1 = "Cluster1", ident.2 = "Other_Malignant",
@@ -381,7 +375,7 @@ if ("IGF1R" %in% rownames(degs_cluster1_sig)) {
   print(degs_cluster1_sig["IGF1R", ])
 }
 
-# ---------- 恶性上皮亚群 UMAP ----------
+# ---------- Malignant epithelial subcluster UMAP ----------
 p_sub_umap <- DimPlot(
   epi_cells, reduction = "umap", group.by = "seurat_clusters",
   label = TRUE, label.size = 3
@@ -389,7 +383,7 @@ p_sub_umap <- DimPlot(
 ggsave(file.path(fig_dir, "Malignant_subclusters_UMAP.pdf"),
        p_sub_umap, width = 8, height = 7)
 
-# ---------- IGF1R 在各亚群的表达与阳性率 ----------
+# ---------- IGF1R expression and positivity by subcluster ----------
 df_sub <- FetchData(epi_cells, vars = c("seurat_clusters", "IGF1R"))
 colnames(df_sub) <- c("subcluster", "IGF1R")
 p_sub_violin <- ggplot(df_sub, aes(x = subcluster, y = IGF1R, fill = subcluster)) +
@@ -414,7 +408,7 @@ p_hetero <- p_sub_violin / p_sub_bar + plot_annotation(
 ggsave(file.path(fig_dir, "IGF1R_heterogeneity_subcluster.pdf"),
        p_hetero, width = 10, height = 9)
 
-# ---------- 火山图：Cluster1 vs Other Malignant ----------
+# ---------- Volcano: Cluster1 vs Other Malignant ----------
 degs_plot <- degs_cluster1
 degs_plot$gene <- rownames(degs_plot)
 degs_plot$neglogp <- -log10(degs_plot$p_val_adj + 1e-300)
@@ -438,7 +432,7 @@ p_volcano <- ggplot(degs_plot, aes(x = avg_log2FC, y = neglogp, color = color)) 
 ggsave(file.path(fig_dir, "Volcano_Cluster1_vs_Other.pdf"),
        p_volcano, width = 8, height = 7)
 
-# ---------- 功能评分：EMT / Stemness / S / G2M ----------
+# ---------- Functional scores: EMT / Stemness / S / G2M ----------
 df_func <- FetchData(epi_cells,
                      vars = c("cluster1_vs_rest", "EMT_Score",
                               "Stemness_Score", "S.Score", "G2M.Score"))
@@ -460,13 +454,13 @@ p_func <- ggplot(df_func_long, aes(x = Group, y = Value, fill = Group)) +
 ggsave(file.path(fig_dir, "Functional_scores_Cluster1.pdf"),
        p_func, width = 10, height = 8)
 
-# 保存对象saveRDS(all_samples, file.path(PROJECT_DIR, "all_samples_final.rds"))
+# Save objects
+saveRDS(all_samples, file.path(PROJECT_DIR, "all_samples_final.rds"))
 saveRDS(epi_cells, file.path(PROJECT_DIR, "epi_cells_final.rds"))
 
-# ============================================================
-# 6. 免疫检查点分析（图 10 PD-L1、图 11 PDCD1、图 12 CD163）
-#    患者按恶性上皮 IGF1R 平均表达中位数分为 IGF1R_high / IGF1R_low
-# ============================================================
+# 6. Immune checkpoint analysis 
+#    Patients split by median IGF1R in malignant epithelial
+
 patient_igf1r <- FetchData(all_samples, vars = c("orig.ident", "IGF1R", "cell_group")) %>%
   filter(cell_group == "Malignant_Epithelial") %>%
   group_by(orig.ident) %>%
@@ -479,10 +473,10 @@ patient_igf1r$patient_IGF1R_group <- ifelse(
 all_samples$patient_IGF1R_group <- patient_igf1r$patient_IGF1R_group[
   match(all_samples$orig.ident, patient_igf1r$orig.ident)
 ]
-cat("\n== 患者 IGF1R 分组 ==\n")
+cat("\n== Patient IGF1R groups ==\n")
 print(table(patient_igf1r$patient_IGF1R_group))
 
-# 两组比较小提琴图（Wilcoxon 检验，横坐标为 IGF1R_high / IGF1R_low）
+# Two-group violin (Wilcoxon, x-axis = IGF1R_high / IGF1R_low)
 plot_two_group_violin <- function(df, group_col, value_col, title, ylab) {
   ok <- !is.na(df[[group_col]]) & is.finite(df[[value_col]])
   df <- df[ok, ]
@@ -517,7 +511,7 @@ plot_two_group_violin <- function(df, group_col, value_col, title, ylab) {
           plot.title = element_text(face = "bold", hjust = 0.5))
 }
 
-# ---------- 图 10：PD-L1（CD274）在恶性上皮细胞 ----------
+# ---------- Fig10: PD-L1 (CD274) in malignant epithelial ----------
 malig_cells <- subset(all_samples, cell_group == "Malignant_Epithelial")
 df_pdl1 <- FetchData(malig_cells, vars = c("CD274", "patient_IGF1R_group"))
 colnames(df_pdl1) <- c("expr", "group")
@@ -531,7 +525,7 @@ ggsave(file.path(fig_dir, "Fig10_PDL1_malignant_IGF1R_high_vs_low.pdf"),
 ggsave(file.path(fig_dir, "Fig10_PDL1_malignant_IGF1R_high_vs_low.png"),
        p_pdl1, width = 6, height = 6, dpi = 300)
 
-# ---------- 图 11：PDCD1 等免疫检查点基因在 T 细胞 ----------
+# ---------- Fig11: PDCD1 checkpoint genes in T cells ----------
 t_cells <- subset(all_samples, manual_celltype == "T_cell")
 checkpoint_genes <- c("PDCD1", "CTLA4", "HAVCR2", "LAG3", "TIGIT", "TOX")
 for (gene in checkpoint_genes) {
@@ -553,7 +547,7 @@ for (gene in checkpoint_genes) {
          p_ck, width = 6, height = 6, dpi = 300)
 }
 
-# ---------- T 细胞耗竭评分 ----------
+# ---------- T cell exhaustion score ----------
 exhaustion_genes <- list(c("PDCD1", "CTLA4", "HAVCR2", "LAG3", "TIGIT", "TOX"))
 t_cells <- AddModuleScore(t_cells, features = exhaustion_genes, name = "Exhaustion_Score")
 df_exhaust <- FetchData(t_cells, vars = c("Exhaustion_Score1", "patient_IGF1R_group"))
@@ -568,7 +562,7 @@ ggsave(file.path(fig_dir, "Fig11_Tcell_exhaustion_score.pdf"),
 ggsave(file.path(fig_dir, "Fig11_Tcell_exhaustion_score.png"),
        p_exhaust, width = 6, height = 6, dpi = 300)
 
-# ---------- 图 12：CD163（M2 样巨噬细胞标志物）在髓系细胞 ----------
+# ---------- Fig12: CD163 (M2 macrophage marker) in myeloid ----------
 myeloid_cells <- subset(all_samples, manual_celltype == "Myeloid")
 for (gene in c("CD163", "MRC1")) {
   df_mye <- FetchData(myeloid_cells, vars = c(gene, "patient_IGF1R_group"))
@@ -586,13 +580,12 @@ for (gene in c("CD163", "MRC1")) {
          p_mye, width = 6, height = 6, dpi = 300)
 }
 
-# ============================================================
-# 7. 恶性上皮患者级 pseudobulk 相关性
-# ============================================================
+# 7. Patient-level pseudobulk correlation in malignant epithelial
+
 epi_cells$patient_id <- epi_cells$orig.ident
 epi_cells$group_c1   <- epi_cells$cluster1_vs_rest
 
-# 取原始 RNA counts
+# Extract raw RNA counts
 get_counts <- function(obj, assay = "RNA") {
   a <- obj[[assay]]
   if (inherits(a, "Assay5")) {
@@ -605,7 +598,7 @@ epi_cells <- JoinLayers(epi_cells, assay = "RNA")
 cnt <- get_counts(epi_cells, assay = "RNA")
 stopifnot("IGF1R" %in% rownames(cnt), "USP30" %in% rownames(cnt))
 
-# 患者 × 亚群 pseudobulk：原始 counts
+# Patient x subcluster pseudobulk: raw counts
 df_expr <- data.frame(
   cell       = colnames(cnt),
   patient_id = epi_cells$patient_id,
@@ -675,12 +668,12 @@ res_raw <- rbind(
   run_spearman(pb_c1_raw,    "Malignant_epi_Cluster1_rawcounts"),
   run_spearman(pb_other_raw, "Malignant_epi_Other_rawcounts")
 )
-cat("\n== 原始 counts 患者级 pseudobulk Spearman ==\n")
+cat("\n== Raw-count patient pseudobulk Spearman ==\n")
 print(res_raw)
 fwrite(res_raw,
        file.path(out_dir, "GSE183904_patient_pseudobulk_spearman_rawcounts.csv"))
 
-# 主分析：nCount_RNA CPM 归一化患者级 pseudobulk
+# Main analysis: nCount_RNA CPM-normalized patient pseudobulk
 meta_epi <- data.frame(
   cell       = colnames(epi_cells),
   patient_id = epi_cells$patient_id,
@@ -746,12 +739,12 @@ res_norm <- rbind(
   run_spearman_norm(pb_c1_norm,    "Malignant_epi_Cluster1_CPM"),
   run_spearman_norm(pb_other_norm, "Malignant_epi_Other_CPM")
 )
-cat("\n== 主分析：CPM 归一化患者级 pseudobulk Spearman ==\n")
+cat("\n== Main: CPM-normalized patient pseudobulk Spearman ==\n")
 print(res_norm)
 fwrite(res_norm,
        file.path(out_dir, "GSE183904_patient_pseudobulk_spearman_CPM.csv"))
 
-# 敏感性：最小细胞数阈值
+# Sensitivity: minimum cells per patient threshold
 run_spearman_thresh <- function(pb, label, min_n, value_col = c("CPM", "raw")) {
   value_col <- match.arg(value_col)
   df <- pb %>% filter(n_cells >= min_n)
@@ -788,12 +781,12 @@ thresh_tab <- rbind(
   run_spearman_thresh(pb_other_norm, "Other",    10, "CPM"),
   run_spearman_thresh(pb_other_norm, "Other",    20, "CPM")
 )
-cat("\n== 最小细胞数阈值敏感性 ==\n")
+cat("\n== Min-cells threshold sensitivity ==\n")
 print(thresh_tab)
 fwrite(thresh_tab,
        file.path(out_dir, "GSE183904_spearman_min_cells_sensitivity.csv"))
 
-# 稳健性：leave-one-patient-out
+# Robustness: leave-one-patient-out
 loo_spearman <- function(df, label, value_col = c("CPM", "raw")) {
   value_col <- match.arg(value_col)
   if (value_col == "CPM") {
@@ -828,7 +821,7 @@ cat("\n== Leave-one-patient-out ==\n")
 print(loo_tab)
 fwrite(loo_tab, file.path(out_dir, "GSE183904_LOO_stability.csv"))
 
-# 图 1：CPM 归一化患者级 pseudobulk 散点
+# Fig: CPM-normalized patient pseudobulk scatter
 plot_norm <- function(df, title, size_by_cells = FALSE) {
   r <- spearman_ci(df$IGF1R_cpm, df$USP30_cpm)
   sub <- sprintf(
@@ -879,7 +872,7 @@ p_main_norm <- (p_all_norm | p_c1_norm | p_other_norm) +
 ggsave(file.path(fig_dir, "Fig1_main_CPM_panel.pdf"),
        p_main_norm, width = 15, height = 5.2)
 
-# 图：min_cells 敏感性
+# Fig: min-cells sensitivity
 thresh_tab$analysis <- factor(
   thresh_tab$analysis,
   levels = c("Cluster1", "all", "Other")
@@ -920,7 +913,7 @@ p_sens <- ggplot(
 ggsave(file.path(fig_dir, "FigS1_min_cells_sensitivity.pdf"),
        p_sens, width = 6.5, height = 4.5)
 
-# 图：LOO 稳定性
+# Fig: LOO stability
 loo_dist <- function(df, label, value_col = "CPM") {
   if (value_col == "CPM") {
     x <- df$IGF1R_cpm; y <- df$USP30_cpm
@@ -972,9 +965,8 @@ p_loo <- ggplot(loo_df, aes(x = analysis, y = rho_loo, fill = analysis)) +
 ggsave(file.path(fig_dir, "FigS2_LOO_stability.pdf"),
        p_loo, width = 6, height = 4.5)
 
-# ============================================================
-# 8. 各细胞类型 IGF1R / USP30 表达与阳性率
-# ============================================================
+# 8. IGF1R / USP30 expression and positivity by cell type
+
 all_samples$celltype_plot <- as.character(all_samples$manual_celltype)
 all_samples$celltype_plot[
   all_samples$manual_celltype == "Epithelial"
@@ -983,7 +975,7 @@ c1_cells <- colnames(epi_cells)[epi_cells$cluster1_vs_rest == "Cluster1"]
 all_samples$celltype_plot[colnames(all_samples) %in% c1_cells] <-
   "Malignant_Cluster1"
 
-# 表达均值：RNA data；阳性率：原始 RNA counts > 0
+# Mean expr: RNA data; positivity: raw counts > 0
 expr_mat <- LayerData(all_samples[["RNA"]], layer = "data")
 rna_counts <- LayerData(all_samples[["RNA"]], layer = "counts")
 stopifnot("IGF1R" %in% rownames(expr_mat), "USP30" %in% rownames(expr_mat))
@@ -1019,12 +1011,12 @@ pos_df <- cnt_df %>%
     .groups = "drop"
   )
 comb2 <- merge(summary_df, pos_df, by = "celltype")
-cat("\n== 各细胞类型表达 / RNA 阳性率 ==\n")
+cat("\n== Expression / RNA positivity by cell type ==\n")
 print(as.data.frame(comb2))
 fwrite(comb2,
        file.path(out_dir, "GSE183904_celltype_expression_positive_rate_RNA.csv"))
 
-# 图 2a：IGF1R 细胞类型 DotPlot
+# Fig2a: IGF1R cell type DotPlot
 ct_order <- c(
   "Malignant_Cluster1", "Malignant_Epithelial",
   "Fibroblast", "Endothelial", "Myeloid",
@@ -1053,12 +1045,12 @@ p2a <- ggplot(dot_igf1r, aes(x = "IGF1R", y = celltype)) +
 ggsave(file.path(fig_dir, "Fig2a_IGF1R_celltype_dotplot.pdf"),
        p2a, width = 4.5, height = 4.5)
 
-# Cluster1 内细胞级补充：IGF1R+ vs IGF1R- 的 USP30 阳性率
+# Cluster1 cell-level: USP30 positivity in IGF1R+ vs IGF1R-
 c1_df <- meta_epi %>% filter(group_c1 == "Cluster1")
 c1_df$IGF1R_pos <- as.numeric(cnt["IGF1R", c1_df$cell] > 0)
 c1_df$USP30_pos <- as.numeric(cnt["USP30", c1_df$cell] > 0)
 tab <- table(c1_df$IGF1R_pos, c1_df$USP30_pos)
-cat("\n== Cluster1 内 IGF1R+ vs USP30+ 列联表 ==\n")
+cat("\n== Cluster1 IGF1R+ vs USP30+ contingency ==\n")
 print(tab)
 if (all(dim(tab) == c(2, 2))) {
   ft <- fisher.test(tab)
@@ -1084,10 +1076,10 @@ bar_df$ci_low  <- mapply(function(x, n) binom_ci(x, n)[1],
                          bar_df$n_pos, bar_df$n)
 bar_df$ci_high <- mapply(function(x, n) binom_ci(x, n)[2],
                          bar_df$n_pos, bar_df$n)
-cat("\n== 数据 ==\n")
+cat("\n== Data ==\n")
 print(as.data.frame(bar_df))
 
-# 图 2b：USP30 阳性率按 IGF1R 状态
+# Fig2b: USP30 positivity by IGF1R status
 p2b <- ggplot(bar_df, aes(x = group, y = pct, fill = group)) +
   geom_bar(stat = "identity", width = 0.6, alpha = 0.85) +
   geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.15) +
@@ -1114,9 +1106,9 @@ p_fig2 <- (p2a | p2b) + plot_annotation(tag_levels = "A")
 ggsave(file.path(fig_dir, "Fig2_main_panel.pdf"),
        p_fig2, width = 9.5, height = 4.8)
 
-# ============================================================
-# 9. 组织来源标签与按细胞类型患者级 pseudobulk
-# ============================================================
+
+# 9. Tissue source labels and cell-type patient pseudobulk
+
 primary_tumor <- c(
   "GSM5573467_sample2", "GSM5573468_sample3", "GSM5573470_sample5",
   "GSM5573472_sample7", "GSM5573473_sample8", "GSM5573475_sample10",
@@ -1147,12 +1139,12 @@ all_samples$tissue_source <- ifelse(
     )
   )
 )
-# 患者级标签统一："_" 替换为 "-"
+# Unify patient labels: "_" replaced by "-"
 all_samples$patient_label <- gsub("_", "-", all_samples$orig.ident)
-cat("\n== 组织来源分布 ==\n")
+cat("\n== Tissue source distribution ==\n")
 print(table(all_samples$tissue_source))
 
-# 各细胞类型表达与阳性率汇总
+# Expression and positivity summary by cell type
 cell_types <- unique(all_samples$manual_celltype)
 expr_data  <- GetAssayData(all_samples, assay = "RNA", layer = "data")
 expression_summary <- data.frame()
@@ -1180,7 +1172,7 @@ write.csv(expression_summary,
           file.path(out_dir, "IGF1R_USP30_celltype_summary.csv"),
           row.names = FALSE)
 
-# 阳性率条形图
+# Positivity barplot
 plot_data <- expression_summary %>%
   select(cell_type, IGF1R_pos_rate, USP30_pos_rate, both_pos_rate) %>%
   pivot_longer(-cell_type, names_to = "metric", values_to = "value") %>%
@@ -1221,13 +1213,13 @@ p_bar <- ggplot(
 ggsave(file.path(fig_dir, "IGF1R_USP30_positivity_barplot.pdf"),
        p_bar, width = 9, height = 5)
 
-# 患者级 pseudobulk 按细胞类型：仅原发肿瘤
+# Cell-type patient pseudobulk: primary tumor only
 tumor_samples <- all_samples[, all_samples$tissue_source == "Primary_Tumor"]
 celltypes_to_test <- expression_summary$cell_type[
   expression_summary$USP30_pos_rate > 3 &
     expression_summary$n_cells > 500
 ]
-cat("\n== 纳入患者级 pseudobulk 相关分析的细胞类型 ==\n")
+cat("\n== Cell types in patient pseudobulk correlation ==\n")
 print(celltypes_to_test)
 
 pseudobulk_list <- list()
@@ -1236,7 +1228,7 @@ for (ct in celltypes_to_test) {
   if (length(cells_ct) < 100) next
   sub_obj <- tumor_samples[, cells_ct]
   sub_obj$patient_label <- all_samples$patient_label[match(colnames(sub_obj), colnames(all_samples))]
-  # 在原始 counts 层做 pseudobulk 聚合（按患者级标签）
+  # Aggregate pseudobulk on raw counts (by patient label)
   pb <- AggregateExpression(
     sub_obj,
     group.by      = "patient_label",
@@ -1249,7 +1241,7 @@ for (ct in celltypes_to_test) {
     patient = names(table(sub_obj$patient_label)),
     n_cells = as.numeric(table(sub_obj$patient_label))
   )
-  # 每患者该细胞类型所有基因的总 counts 作为 CPM 分母
+  # Total counts across genes per patient as CPM denominator
   total_counts <- Matrix::colSums(pb)
   pb_df <- data.frame(
     patient    = colnames(pb),
@@ -1268,7 +1260,7 @@ for (ct in celltypes_to_test) {
   pseudobulk_list[[ct]] <- pb_df
 }
 pseudobulk_all <- bind_rows(pseudobulk_list)
-cat("\n== 每类细胞中患者细胞数分布 ==\n")
+cat("\n== Patient cell count distribution per cell type ==\n")
 print(
   pseudobulk_all %>%
     group_by(cell_type) %>%
@@ -1281,13 +1273,13 @@ print(
     )
 )
 
-# 逐细胞类型 Spearman + BH-FDR
+# Per-cell-type Spearman + BH-FDR
 cor_results <- data.frame()
 for (ct in unique(pseudobulk_all$cell_type)) {
   df_ct <- pseudobulk_all %>% filter(cell_type == ct, n_cells >= 10)
-  cat("\n", ct, ": 满足 n_cells >= 10 的患者数 =", nrow(df_ct), "\n")
+  cat("\n", ct, ": patients with n_cells >= 10 =", nrow(df_ct), "\n")
   if (nrow(df_ct) < 5) {
-    cat("跳过", ct, "：患者数不足\n")
+    cat("Skip", ct, ": insufficient patients\n")
     next
   }
   test <- cor.test(df_ct$IGF1R_logcpm, df_ct$USP30_logcpm,
@@ -1320,7 +1312,7 @@ if (nrow(cor_results) > 0) {
   )
 }
 
-# 森林图
+# Forest plot
 if (nrow(cor_results) > 0) {
   cor_results$cell_type <- factor(
     cor_results$cell_type,
@@ -1362,10 +1354,9 @@ if (nrow(cor_results) > 0) {
          p_forest, width = 9, height = 4.5)
 }
 
-# ============================================================
-# 10. 全样本患者级 pseudobulk 与肿瘤/正常对比
-# ============================================================
-# 原发肿瘤全部细胞混合的患者级 pseudobulk
+
+# 10. Whole-sample patient pseudobulk and tumor/normal comparison
+# Primary tumor all-cell patient pseudobulk
 pb_allcells <- AggregateExpression(
   tumor_samples,
   group.by      = "patient_label",
@@ -1392,7 +1383,7 @@ test_allcells <- cor.test(
   method = "spearman"
 )
 cat(sprintf(
-  "\n原发肿瘤全细胞混合患者级 pseudobulk: rho = %.3f, P = %.3g, n = %d\n",
+  "\nPrimary tumor all-cell patient pseudobulk: rho = %.3f, P = %.3g, n = %d\n",
   test_allcells$estimate,
   test_allcells$p.value,
   nrow(pb_allcells_df)
@@ -1415,7 +1406,7 @@ p_allcells <- ggplot(pb_allcells_df, aes(x = IGF1R_logcpm, y = USP30_logcpm)) +
 ggsave(file.path(fig_dir, "Scatter_IGF1R_USP30_AllCells_primaryTumor.pdf"),
        p_allcells, width = 5, height = 5)
 
-# 肿瘤 vs 正常患者级 pseudobulk
+# Tumor vs normal patient pseudobulk
 tissue_plot_data <- data.frame()
 for (tissue in c("Primary_Tumor", "Primary_Normal")) {
   samples_tissue <- all_samples[, all_samples$tissue_source == tissue]
@@ -1479,12 +1470,4 @@ p_tissue <- ggplot(
   )
 ggsave(file.path(fig_dir, "Scatter_IGF1R_USP30_Tumor_vs_Normal.pdf"),
        p_tissue, width = 6, height = 5)
-
-
-
-# ============================================================
 # finish
-# ============================================================
-cat("\nGSE183904 分析完成。\n")
-cat("输出目录：", out_dir, "\n")
-cat("图目录：", fig_dir, "\n")
