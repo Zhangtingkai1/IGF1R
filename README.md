@@ -19,8 +19,8 @@ library(harmony)
 library(infercnv) 
 set.seed(123)
 
-out_dir <- file.path(PROJECT_DIR, "results_IGF1R_USP30")
-fig_dir <- file.path(PROJECT_DIR, "figures_IGF1R_USP30")
+out_dir <- file.path(PROJECT_DIR, "results")
+fig_dir <- file.path(PROJECT_DIR, "figures")
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 dir.create(fig_dir, showWarnings = FALSE, recursive = TRUE)
 
